@@ -10,7 +10,8 @@
 ## Usage
 1. Download the latest [Release](https://github.com/arukanoido/squad-stat-source/releases) or build from source. 
 2. Edit `appsettings.json` and add paths to dedicated server folders.
-3. Locate your server [Battlemetrics](https://www.battlemetrics.com/servers/search?game=squad) IDs
+3. Locate your server [Battlemetrics](https://www.battlemetrics.com/servers/search?game=squad) IDs.
+
 Server entries must be in the format shown below. 
 ```
 ,{
