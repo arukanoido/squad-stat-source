@@ -10,10 +10,11 @@
 ## Usage
 1. Download the latest [Release](https://github.com/arukanoido/squad-stat-source/releases) or build from source. 
 2. Edit `appsettings.json` and add paths to dedicated server folders.
+3. Locate your server [Battlemetrics](https://www.battlemetrics.com/servers/search?game=squad) IDs
 Server entries must be in the format shown below. 
 ```
 ,{
-  "id": "",             <-- Server's [Battlemetrics](https://www.battlemetrics.com/servers/search?game=squad) ID. 
+  "id": "",             <-- Server's Battlemetrics ID. 
   "path": "",           <-- Path to a Squad dedicated server program root directory (e.g C:\\Full\\Path\\To\\Server1)
   "lasttimestamp": ""   <-- As shown
 }
@@ -55,7 +56,8 @@ Events not available in logs:
 
 ## Build for Windows
 
-Run `build.bat`. 
+1) Install the [.NET Core SDK](https://dotnet.microsoft.com/download)
+2) Run `build.bat`. 
 
 ## Build for Linux
 
