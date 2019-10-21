@@ -15,13 +15,19 @@ namespace SquadStatSource
 
     class Program
     {
+#if DEBUG
+        public static string Appsettings = "appsettings.dev.json";
+#endif
+#if RELEASE
+        public static string Appsettings = "appsettings.json";
+#endif
         public static JObject Config;
 
         private static List<DedicatedServer> DedicatedServers = new List<DedicatedServer>();
 
         static void Main(string[] args)
         {
-            Config = Newtonsoft.Json.JsonConvert.DeserializeObject(File.ReadAllText("appsettings.json")) as JObject;
+            Config = Newtonsoft.Json.JsonConvert.DeserializeObject(File.ReadAllText(Appsettings)) as JObject;
 
             foreach (var Server in Config["servers"])
             {

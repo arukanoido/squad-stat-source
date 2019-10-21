@@ -26,7 +26,7 @@ namespace SquadStatSourceWorker
             foreach (var JItem in Squad["weapons"])
             {
                 var Weapon = new Weapon(JItem["class"].ToString());
-                Weapons.TryAdd(Weapon.ID, Weapon);
+                Weapons.Add(Weapon.ID, Weapon);
             }
             foreach (var JItem in Squad["teams"])
             {
@@ -44,11 +44,11 @@ namespace SquadStatSourceWorker
             foreach (var JItem in Squad["vehicles"])
             {
                 var Vehicle = new Vehicle(JItem["class"].ToString());
-                Vehicles.TryAdd(Vehicle.ID, Vehicle);
+                Vehicles.Add(Vehicle.ID, Vehicle);
             }
         }
 
-        public static long GetItemOrDefault(string Name, Dictionary<long, SquadType> Collection, bool Fuzzy = false)
+        public static long GetItemOrDefault(string Name, Dictionary<long, SquadType> Collection, bool RequireValid = false, bool Fuzzy = false)
         {
             long Result = -1L;
             if (Fuzzy)
@@ -59,13 +59,13 @@ namespace SquadStatSourceWorker
             {
                 Result = GetExactMatch(Name, Collection);
             }
-            Debug.Assert(Result != -1);
-            return (Result == -1) ? GetCRC32OfName(Name): Result;
+            if (RequireValid) { Debug.Assert(Result != -1); }
+            return (Result == -1) ? GetCRC32OfInput(Name): Result;
         }
 
         public static long GetExactMatch(string Name, Dictionary<long, SquadType> Collection)
         {
-            var ID = Convert.ToInt64(Crc32Algorithm.Compute(Encoding.ASCII.GetBytes(Name)));
+            var ID = GetCRC32OfInput(Name);
             return (Collection.ContainsKey(ID)) ? ID: -1L;
         }
 
@@ -87,15 +87,15 @@ namespace SquadStatSourceWorker
             return Name.Remove(Name.LastIndexOf("_C") + 2);
         }
 
-        private static long GetCRC32OfName(string Name)
+        public static long GetCRC32OfInput(string Input)
         {
-            return Convert.ToInt64(Crc32Algorithm.Compute(Encoding.ASCII.GetBytes(Name)));
+            return Convert.ToInt64(Crc32Algorithm.Compute(Encoding.ASCII.GetBytes(Input)));
         }
     }
 
     public class Server
     {
-        public int ServerID { get; set; }
+        public long ServerID { get; set; }
         public Match CurrentMatch { get; set; }
         public List<long> PlayersOnServer = new List<long>();
         //public string Line = "";
@@ -170,6 +170,7 @@ namespace SquadStatSourceWorker
 
     public class Match
     {
+        public long MatchID { get; set; }
         public DateTime MatchStart { get; set; }
         public DateTime MatchEnd { get; set; }
         public long MatchDuration { get; set; }
@@ -185,7 +186,7 @@ namespace SquadStatSourceWorker
 
         public SquadType(string Name)
         {
-            this.ID = Convert.ToInt64(Crc32Algorithm.Compute(Encoding.ASCII.GetBytes(Name)));
+            this.ID = Squad.GetCRC32OfInput(Name);
             this.Name = Name;
         }
     }

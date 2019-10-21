@@ -19,7 +19,7 @@ namespace SquadStatSourceWorker
             Table = new Table(Schema);
         }
 
-        public void Serialize(string MatchStartTime)
+        public void Serialize()
         {
             if (Squad.Server.CurrentMatch.Valid)
             {
@@ -30,9 +30,10 @@ namespace SquadStatSourceWorker
 #if RELEASE
                 System.IO.Directory.CreateDirectory("matchdata");
 #endif
-                using (Stream FileStream = System.IO.File.Create(Base + MatchStartTime + ".parquet"))
+                var Filename = Squad.Server.CurrentMatch.MatchID.ToString() + ".parquet";
+                using (Stream FileStream = System.IO.File.Create(Base + Filename))
                 {
-                    using (ParquetWriter Writer = new ParquetWriter(Table.Schema, FileStream) { CompressionMethod = CompressionMethod.Gzip })
+                    using (ParquetWriter Writer = new ParquetWriter(Table.Schema, FileStream) { CompressionMethod = CompressionMethod.Snappy })
                     {
                         foreach(var Contract in Events.Contracts)
                         {
@@ -57,7 +58,7 @@ namespace SquadStatSourceWorker
                         }
                     }
                 }
-                Worker.Uploader.Upload(Base + MatchStartTime + ".parquet");
+                Worker.Uploader.UploadDiff(Base);
             }
             else
             {
@@ -109,7 +110,15 @@ namespace SquadStatSourceWorker
             for (var Index = 0; Index < Events.Fields.Count; Index++)
             {
                 int Position = 0;
-                if ((Position = Indices.IndexOf(Index)) != -1)
+                if (Events.Fields[Index].Name.Equals("server_id", StringComparison.Ordinal))
+                {
+                    RowContents.Add(Squad.Server.ServerID);
+                }
+                else if (Events.Fields[Index].Name.Equals("match_id", StringComparison.Ordinal))
+                {
+                    RowContents.Add(Squad.Server.CurrentMatch.MatchID);
+                }
+                else if ((Position = Indices.IndexOf(Index)) != -1)
                 {
                     RowContents.Add(Data[Position]);
                     if (Data[Position] is Contract)
@@ -190,6 +199,12 @@ namespace SquadStatSourceWorker
         public static List<Contract> Contracts = new List<Contract>();
 
         public static List<FieldGroup> FieldGroups = new List<FieldGroup>();
+
+        public static FieldGroup BaseGroup { get; } = new FieldGroup(new DataField[] {
+            new DateTimeDataField("timestamp", DateTimeFormat.DateAndTime),
+            new DataField("server_id", DataType.Int64),
+            new DataField("match_id", DataType.Int64)
+        });
 
         public static Event[] List { get; } = {
             new PlayerJoined(),
@@ -334,8 +349,11 @@ namespace SquadStatSourceWorker
             if (Tokenized.Success)
             {
                 var ID = Convert.ToInt64(Tokenized.Value.SteamID);
-                Squad.Server.PlayersOnServer.Remove(ID);
-                PlayerDisconnectGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
+                if (Squad.Server.PlayersOnServer.Contains(ID))
+                {
+                    Squad.Server.PlayersOnServer.Remove(ID);
+                    PlayerDisconnectGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
+                }
             }
         }
     }
@@ -588,7 +606,8 @@ namespace SquadStatSourceWorker
             new DataField("role_id", DataType.Int64),
             new DataField("faction_id", DataType.Int64),
             new DataField("damage", DataType.Float),
-            new DataField("downed", DataType.Boolean)
+            new DataField("downed", DataType.Boolean),
+            new DataField("enemy_damage", DataType.Boolean)
         });
 
         public static FieldGroup PlayerTeamDamageGroup { get; } = new FieldGroup(new DataField[] {
@@ -632,12 +651,8 @@ namespace SquadStatSourceWorker
                 Debug.Assert(CauserSteamID != -1);
 
                 string WeaponName = Squad.TrimIDFromName(Tokenized.Value.Weapon);
-                long WeaponID = Squad.GetExactMatch(WeaponName, Squad.Weapons);
-                if (WeaponID != -1)
-                {
-                    // @todo move this so that weapon ID is never -1 and use GetItemOrDefault instead
-                    Squad.Players[CauserSteamID].WeaponID = WeaponID;
-                }
+                long WeaponID = Squad.GetItemOrDefault(WeaponName, Squad.Weapons);
+                Squad.Players[CauserSteamID].WeaponID = WeaponID;
 
                 if (Tokenized.Value.CauserController != null)
                 {
@@ -684,7 +699,7 @@ namespace SquadStatSourceWorker
                                 Squad.Players[CauserSteamID].WeaponID,
                                 Squad.Players[CauserSteamID].RoleID,
                                 Squad.Players[CauserSteamID].FactionID,
-                                Damage, Downed
+                                Damage, Downed, true
                             });
                         }
                     }
@@ -736,7 +751,7 @@ namespace SquadStatSourceWorker
                                     Squad.Players[CauserSteamID].WeaponID,
                                     Squad.Players[CauserSteamID].RoleID,
                                     Squad.Players[CauserSteamID].FactionID,
-                                    Damage, Downed
+                                    Damage, Downed, true
                                 });
                             }
                         }
@@ -779,7 +794,7 @@ namespace SquadStatSourceWorker
                                     Squad.Players[CauserSteamID].WeaponID,
                                     Squad.Players[CauserSteamID].RoleID,
                                     Squad.Players[CauserSteamID].FactionID,
-                                    Damage, Downed
+                                    Damage, Downed, true
                                 }, false);
                             }
                         }
@@ -848,7 +863,7 @@ namespace SquadStatSourceWorker
                             Squad.Players[CauserSteamID].WeaponID,
                             Squad.Players[CauserSteamID].RoleID,
                             Squad.Players[CauserSteamID].FactionID,
-                            0.0f, true
+                            0.0f, true, true
                         });
                     }
                 }
@@ -1078,13 +1093,17 @@ namespace SquadStatSourceWorker
                 if (Squad.Server.CurrentMatch != null)
                 {
                     // Write a completed match to file
-                    Events.Serializer.Serialize(Tokenized.Value.Timestamp.ToString("yyyy-MM-dd_HH-mm-ss"));
+                    Events.Serializer.Serialize();
                 }
 
                 Squad.Server.CurrentMatch = new Match()
                 {
                     MatchStart = Tokenized.Value.Timestamp,
                 };
+                Squad.Server.CurrentMatch.MatchID = Squad.GetCRC32OfInput(
+                    Squad.Server.ServerID.ToString() +
+                    Squad.Server.CurrentMatch.MatchStart.ToString()
+                );
                 MatchStartGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, true });
             }
         }
@@ -1171,7 +1190,7 @@ namespace SquadStatSourceWorker
                     true
                 });
 
-                Events.Serializer.Serialize(Tokenized.Value.Timestamp.ToString("yyyy-MM-dd_HH-mm-ss"));
+                Events.Serializer.Serialize();
                 Worker.WriteDedicatedServerConfig("lasttimestamp", Line.Substring(1, 23));
                 Squad.Server.PlayersOnServer.Clear();
             }

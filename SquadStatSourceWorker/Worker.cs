@@ -17,7 +17,6 @@ namespace SquadStatSourceWorker
         public string Index { get; set; }
         public string Path { get; set; }
         public string LastTimestamp { get; set; }
-        public string LastUpload { get; set; }
     }
 
     public class Worker
@@ -45,10 +44,10 @@ namespace SquadStatSourceWorker
             Squad.Init();
 
             string ID = args[0];
-            Squad.Server.ServerID = Convert.ToInt32(ID);
+            Squad.Server.ServerID = Convert.ToInt64(ID);
             string Path = args[1] + @"\SquadGame\Saved\Logs\";
 
-            Config = Newtonsoft.Json.JsonConvert.DeserializeObject(File.ReadAllText("appsettings.json")) as JObject;
+            Config = Newtonsoft.Json.JsonConvert.DeserializeObject(File.ReadAllText(Appsettings)) as JObject;
 
             Uploader = new Uploader(Config);
 
@@ -178,7 +177,7 @@ namespace SquadStatSourceWorker
 
         public static void WriteDedicatedServerConfig(string Key, string Value)
         {
-            var FilePath = "appsettings.json";
+            var FilePath = Appsettings;
             var Json = File.ReadAllText(FilePath);
             var Jobject = Newtonsoft.Json.JsonConvert.DeserializeObject(Json) as JObject;
             var Jtoken = Jobject.SelectToken("servers[" + DedicatedServer.Index + "]." + Key);
