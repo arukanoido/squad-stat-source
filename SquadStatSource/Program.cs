@@ -46,6 +46,13 @@ namespace SquadStatSource
                     Console.WriteLine("ERROR: Invalid server id (" + DedicatedServer.ID + ") in appsettings.json");
                     return;
                 }
+
+                if (!File.Exists(DedicatedServer.Path + @"\SquadGame\Saved\Logs\SquadGame.log"))
+                {
+                    Console.WriteLine("ERROR: Invalid server path (" + DedicatedServer.Path + ") in appsettings.json");
+                    return;
+                }
+
                 DedicatedServers.Add(DedicatedServer);
             }
 
