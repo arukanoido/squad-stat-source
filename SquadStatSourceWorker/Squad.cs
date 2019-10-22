@@ -2,6 +2,7 @@
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Net.Http;
 using System.Diagnostics;
 using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
@@ -22,7 +23,10 @@ namespace SquadStatSourceWorker
 
         public static void Init()
         {
-            JObject Squad = Newtonsoft.Json.JsonConvert.DeserializeObject(File.ReadAllText("squad.json")) as JObject;
+            HttpClient Client = new HttpClient();
+            var Content = Client.GetStringAsync("https://solstice-science.glitch.me");
+            JObject Squad = JObject.Parse(Content.Result);
+
             foreach (var JItem in Squad["weapons"])
             {
                 var Weapon = new Weapon(JItem["class"].ToString());

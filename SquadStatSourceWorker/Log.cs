@@ -47,23 +47,14 @@ namespace SquadStatSourceWorker
                                 Table.Add(Row);
                             }
                             if (Table.Count == 0) { continue; }
-
-                            using (ParquetRowGroupWriter GroupWriter = Writer.CreateRowGroup())
-                            {
-                                GroupWriter.Write(Table);
-                            }
-                            Group.Rows.Clear();
-                            Table.Clear();
-                            Events.Contracts.Clear();
                         }
+                        Writer.Write(Table);
                     }
                 }
                 Worker.Uploader.UploadDiff(Base);
             }
-            else
-            {
-                Clear();
-            }
+            Table.Clear();
+            Clear();
             Squad.Server.CurrentMatch = null;
         }
 
@@ -78,7 +69,7 @@ namespace SquadStatSourceWorker
     }
 
     /*
-     * A group of columns used by an event, and a Row Group in Parquet terms
+     * A group of columns used by an event
      */
     public class FieldGroup
     {
@@ -210,6 +201,7 @@ namespace SquadStatSourceWorker
             new PlayerJoined(),
             new PlayerJoinedDuringMapChange(),
             new PlayerDisconnected(),
+            new PlayerKicked(),
             new PlayerRegisterClientAfterMapChange(),
             new PlayerSpawnOrSelectKit(),
             new PlayerEnterOrExitVehicle(),
@@ -349,6 +341,7 @@ namespace SquadStatSourceWorker
             if (Tokenized.Success)
             {
                 var ID = Convert.ToInt64(Tokenized.Value.SteamID);
+
                 if (Squad.Server.PlayersOnServer.Contains(ID))
                 {
                     Squad.Server.PlayersOnServer.Remove(ID);
@@ -358,9 +351,47 @@ namespace SquadStatSourceWorker
         }
     }
 
-#endregion
+    #endregion
 
-#region --PlayerRegisterClientAfterMapChange--
+    #region --PlayerKicked--
+
+    public class PlayerKicked : Event
+    {
+        public override string[] Category { get; } = new string[] { "LogOnlineGame: Display: Kicking player:" };
+        public override string Pattern { get; } =
+@"[{Timestamp:ToDateTime('yyyy.MM.dd-HH.mm.ss:fff')}][{}]LogOnlineGame: Display: Kicking player: {PlayerNameWithPrefixUTF8} ; Reason";
+        public string PlayerNameWithPrefixUTF8 { get; set; }
+
+        public static FieldGroup PlayerKickedGroup { get; } = new FieldGroup(new DataField[] {
+            new DateTimeDataField("timestamp", DateTimeFormat.DateAndTime),
+            new DataField("player_id", DataType.Int64),
+            new DataField("player_disconnected", DataType.Boolean)
+        });
+
+        static PlayerKicked() { }
+
+        public override void Parse(string Line)
+        {
+            var Tokenized = Worker.Tokenizer.Tokenize<PlayerKicked>(Pattern, Line);
+            if (Tokenized.Success)
+            {
+                string PlayerPrefix = null;
+                long ID = Server.FindPlayerByFullName(Tokenized.Value.PlayerNameWithPrefixUTF8, out PlayerPrefix);
+                Squad.Players[ID].Prefix = PlayerPrefix;
+                Debug.Assert(ID != -1);
+
+                if (Squad.Server.PlayersOnServer.Contains(ID))
+                {
+                    Squad.Server.PlayersOnServer.Remove(ID);
+                    PlayerKickedGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
+                }
+            }
+        }
+    }
+
+    #endregion
+
+    #region --PlayerRegisterClientAfterMapChange--
 
     // Works with PlayerJoinDuringMapChange. Only handles the edge case.
     public class PlayerRegisterClientAfterMapChange : Event
@@ -531,10 +562,13 @@ namespace SquadStatSourceWorker
                     if (Tokenized.Value.Pawn.StartsWith("BP_Soldier_"))
                     {
                         // Exited vehicle
-                        Squad.Players[SteamID].VehicleID = 0;
-                        PlayerExitVehicleGroup.AddRow(new object[] {
-                            (DateTimeOffset)Tokenized.Value.Timestamp, SteamID, true
-                        });
+                        if (Squad.Players[SteamID].VehicleID != 0)
+                        {
+                            Squad.Players[SteamID].VehicleID = 0;
+                            PlayerExitVehicleGroup.AddRow(new object[] {
+                                (DateTimeOffset)Tokenized.Value.Timestamp, SteamID, true
+                            });
+                        }
                     }
                     else
                     {
@@ -546,8 +580,16 @@ namespace SquadStatSourceWorker
                         else
                         {
                             // Entered vehicle
-                            var VehicleID = Squad.GetExactMatch(PawnName, Squad.Vehicles);
-                            if (VehicleID == -1)
+                            //var VehicleID = Squad.GetExactMatch(PawnName, Squad.Vehicles);
+                            var VehicleID = Squad.GetItemOrDefault(PawnName, Squad.Vehicles);
+                            Squad.Players[SteamID].VehicleID = VehicleID;
+
+                            PlayerEnterVehicleGroup.AddRow(new object[] {
+                                (DateTimeOffset)Tokenized.Value.Timestamp, SteamID, true, VehicleID
+                            });
+
+                            // @todo track vehicle seats based on who has entered/exited the vehicle
+                            /*if (VehicleID == -1)
                             {
                                 // @todo turret gunner
 
@@ -560,7 +602,7 @@ namespace SquadStatSourceWorker
                                 PlayerEnterVehicleGroup.AddRow(new object[] {
                                     (DateTimeOffset)Tokenized.Value.Timestamp, SteamID, true, VehicleID
                                 });
-                            }
+                            }*/
                         }
                     }
                 }
@@ -827,7 +869,7 @@ namespace SquadStatSourceWorker
                 if (VictimSteamID == -1) { return; }
                 Squad.Players[VictimSteamID].Prefix = Prefix;
 
-                long CauserSteamID = CauserSteamID = Server.FindPlayerByControllerID(Convert.ToInt32(Tokenized.Value.CauserController));
+                long CauserSteamID = Server.FindPlayerByControllerID(Convert.ToInt32(Tokenized.Value.CauserController));
 
                 // Bled out from self damage
                 if (VictimSteamID == CauserSteamID)

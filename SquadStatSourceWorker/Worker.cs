@@ -39,8 +39,7 @@ namespace SquadStatSourceWorker
         static void Main(string[] args)
         {
             Console.OutputEncoding = System.Text.Encoding.Unicode;
-
-            if (!File.Exists("squad.json")) { Console.WriteLine("ERROR: squad.json not found."); return; }
+            
             Squad.Init();
 
             string ID = args[0];
@@ -124,7 +123,7 @@ namespace SquadStatSourceWorker
         static string SeekTimestamp(StreamReader Reader, DateTime TimestampToSeek)
         {
             // While seeking, we still need to register player joins and disconnects
-            Event[] ShortList = new List<Event>(Events.List).GetRange(0, 4).ToArray();
+            Event[] ShortList = new List<Event>(Events.List).GetRange(0, 5).ToArray();
             string Line;
             while ((Line = Reader.ReadLine()) != null)
             {
@@ -181,7 +180,7 @@ namespace SquadStatSourceWorker
             var Json = File.ReadAllText(FilePath);
             var Jobject = Newtonsoft.Json.JsonConvert.DeserializeObject(Json) as JObject;
             var Jtoken = Jobject.SelectToken("servers[" + DedicatedServer.Index + "]." + Key);
-            //Jtoken.Replace(Value);
+            Jtoken.Replace(Value);
             var OutJson = Jobject.ToString();
             File.WriteAllText(FilePath, OutJson);
         }
