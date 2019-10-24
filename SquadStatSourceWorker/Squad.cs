@@ -102,11 +102,12 @@ namespace SquadStatSourceWorker
         public long ServerID { get; set; }
         public Match CurrentMatch { get; set; }
         public List<long> PlayersOnServer = new List<long>();
+        public List<long> PlayersLeavingServer = new List<long>();
         //public string Line = "";
 
-        public static long FindPlayerByName(string Name)
+        public static long FindPlayerByName(string Name, List<long> Collection)
         {
-            var Player = Squad.Server.PlayersOnServer
+            var Player = Collection
                 .Join(Squad.Players,
                     SteamID => SteamID,
                     Players => Players.Key,
@@ -116,10 +117,10 @@ namespace SquadStatSourceWorker
             return Player.SteamID;
         }
 
-        public static long FindPlayerByFullName(string FullName, out string Prefix)
+        public static long FindPlayerByFullName(string FullName, List<long> Collection, out string Prefix)
         {
             string PrefixString = null;
-            var Player = Squad.Server.PlayersOnServer
+            var Player = Collection
                 .Join(Squad.Players,
                     SteamID => SteamID,
                     Players => Players.Key,
@@ -143,9 +144,9 @@ namespace SquadStatSourceWorker
             return Player.SteamID;
         }
 
-        public static long FindPlayerByControllerID(int ID)
+        public static long FindPlayerByControllerID(int ID, List<long> Collection)
         {
-            var Player = Squad.Server.PlayersOnServer
+            var Player = Collection
                 .Join(Squad.Players,
                     SteamID => SteamID,
                     Players => Players.Key,

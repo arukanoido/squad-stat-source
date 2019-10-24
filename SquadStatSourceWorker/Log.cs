@@ -344,6 +344,7 @@ namespace SquadStatSourceWorker
 
                 if (Squad.Server.PlayersOnServer.Contains(ID))
                 {
+                    Squad.Server.PlayersLeavingServer.Add(ID);
                     Squad.Server.PlayersOnServer.Remove(ID);
                     PlayerDisconnectGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
                 }
@@ -376,12 +377,32 @@ namespace SquadStatSourceWorker
             if (Tokenized.Success)
             {
                 string PlayerPrefix = null;
-                long ID = Server.FindPlayerByFullName(Tokenized.Value.PlayerNameWithPrefixUTF8, out PlayerPrefix);
+                long ID = Server.FindPlayerByFullName(
+                    Tokenized.Value.PlayerNameWithPrefixUTF8, 
+                    Squad.Server.PlayersOnServer, 
+                    out PlayerPrefix
+                );
+                if (ID == -1) { 
+                    ID = Server.FindPlayerByFullName(
+                        Tokenized.Value.PlayerNameWithPrefixUTF8,
+                        Squad.Server.PlayersLeavingServer,
+                        out PlayerPrefix
+                    );
+                    #if DEBUG
+                    if (ID == -1)
+                    {
+                        Console.WriteLine("Player missing from server or unparsable name: " + Tokenized.Value.PlayerNameWithPrefixUTF8);
+                        Console.WriteLine(Line);
+                    }
+                    #endif
+                    return;
+                }
+
                 Squad.Players[ID].Prefix = PlayerPrefix;
-                Debug.Assert(ID != -1);
 
                 if (Squad.Server.PlayersOnServer.Contains(ID))
                 {
+                    Squad.Server.PlayersLeavingServer.Add(ID);
                     Squad.Server.PlayersOnServer.Remove(ID);
                     PlayerKickedGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
                 }
@@ -471,8 +492,25 @@ namespace SquadStatSourceWorker
             var Tokenized = Worker.Tokenizer.Tokenize<PlayerSpawnOrSelectKit>(Pattern, Line);
             if (Tokenized.Success)
             {
-                var SteamID = Server.FindPlayerByName(Tokenized.Value.NameUTF8);
-                Debug.Assert(SteamID != -1);
+                var SteamID = Server.FindPlayerByName(
+                    Tokenized.Value.NameUTF8, 
+                    Squad.Server.PlayersOnServer
+                );
+                if (SteamID == -1)
+                {
+                    SteamID = Server.FindPlayerByName(
+                        Tokenized.Value.NameUTF8,
+                        Squad.Server.PlayersLeavingServer
+                    );
+                    #if DEBUG
+                    if (SteamID == -1)
+                    {
+                        Console.WriteLine("Player missing from server or unparsable name: " + Tokenized.Value.NameUTF8);
+                        Console.WriteLine(Line);
+                    }
+                    #endif
+                    return;
+                }
 
                 var RoleID = Squad.GetItemOrDefault(Tokenized.Value.KitName, Squad.Roles);
                 Squad.Players[SteamID].RoleID = RoleID;
@@ -553,57 +591,66 @@ namespace SquadStatSourceWorker
             var Tokenized = Worker.Tokenizer.Tokenize<PlayerEnterOrExitVehicle>(Pattern, Line);
             if (Tokenized.Success)
             {
-                var SteamID = Server.FindPlayerByName(Tokenized.Value.NameUTF8);
-                /* 
-                 * If SteamID is -1 (not found) the player has disconnected while in a vehicle. After the player leaves
-                 * the server, the player's Controller exits the vehicle before getting cleaned up.
-                 */
-                if (SteamID != -1) {
-                    if (Tokenized.Value.Pawn.StartsWith("BP_Soldier_"))
+                var SteamID = Server.FindPlayerByName(Tokenized.Value.NameUTF8, Squad.Server.PlayersOnServer);
+                if (SteamID == -1)
+                {
+                    SteamID = Server.FindPlayerByName(
+                        Tokenized.Value.NameUTF8,
+                        Squad.Server.PlayersLeavingServer
+                    );
+                    #if DEBUG
+                    if (SteamID == -1)
                     {
-                        // Exited vehicle
-                        if (Squad.Players[SteamID].VehicleID != 0)
-                        {
-                            Squad.Players[SteamID].VehicleID = 0;
-                            PlayerExitVehicleGroup.AddRow(new object[] {
-                                (DateTimeOffset)Tokenized.Value.Timestamp, SteamID, true
-                            });
-                        }
+                        Console.WriteLine("Player missing from server or unparsable name: " + Tokenized.Value.NameUTF8);
+                        Console.WriteLine(Line);
+                    }
+                    #endif
+                    return;
+                }
+                if (Tokenized.Value.Pawn.StartsWith("BP_Soldier_"))
+                {
+                    // Exited vehicle
+                    if (Squad.Players[SteamID].VehicleID != 0)
+                    {
+                        Squad.Players[SteamID].VehicleID = 0;
+                        PlayerExitVehicleGroup.AddRow(new object[] {
+                            (DateTimeOffset)Tokenized.Value.Timestamp, SteamID, true
+                        });
+                    }
+                }
+                else
+                {
+                    var PawnName = Squad.TrimIDFromName(Tokenized.Value.Pawn);
+                    if (Tokenized.Value.Pawn.StartsWith("SQDeployable"))
+                    {
+                        // @todo emplacement
                     }
                     else
                     {
-                        var PawnName = Squad.TrimIDFromName(Tokenized.Value.Pawn);
-                        if (Tokenized.Value.Pawn.StartsWith("SQDeployable"))
-                        {
-                            // @todo emplacement
-                        }
-                        else
-                        {
-                            // Entered vehicle
-                            //var VehicleID = Squad.GetExactMatch(PawnName, Squad.Vehicles);
-                            var VehicleID = Squad.GetItemOrDefault(PawnName, Squad.Vehicles);
-                            Squad.Players[SteamID].VehicleID = VehicleID;
+                        // Entered vehicle
+                        //var VehicleID = Squad.GetExactMatch(PawnName, Squad.Vehicles);
+                        var VehicleID = Squad.GetItemOrDefault(PawnName, Squad.Vehicles);
+                        Squad.Players[SteamID].VehicleID = VehicleID;
 
+                        PlayerEnterVehicleGroup.AddRow(new object[] {
+                            (DateTimeOffset)Tokenized.Value.Timestamp, SteamID, true, VehicleID
+                        });
+
+                        // @todo track vehicle seats based on who has entered/exited the vehicle
+                        /*if (VehicleID == -1)
+                        {
+                            // @todo turret gunner
+
+                            // instead of recording the vehicle ID as -1, switch to GetItemOrDefault
+                            // to ensure that any vehicles added in future get properly registered
+                        }
+                        else 
+                        {
+                            // A supported vehicle
                             PlayerEnterVehicleGroup.AddRow(new object[] {
                                 (DateTimeOffset)Tokenized.Value.Timestamp, SteamID, true, VehicleID
                             });
-
-                            // @todo track vehicle seats based on who has entered/exited the vehicle
-                            /*if (VehicleID == -1)
-                            {
-                                // @todo turret gunner
-
-                                // instead of recording the vehicle ID as -1, switch to GetItemOrDefault
-                                // to ensure that any vehicles added in future get properly registered
-                            }
-                            else 
-                            {
-                                // A supported vehicle
-                                PlayerEnterVehicleGroup.AddRow(new object[] {
-                                    (DateTimeOffset)Tokenized.Value.Timestamp, SteamID, true, VehicleID
-                                });
-                            }*/
-                        }
+                        }*/
                     }
                 }
             }
@@ -688,9 +735,28 @@ namespace SquadStatSourceWorker
                 long VictimSteamID = -1;
 
                 string CauserPrefix = null;
-                long CauserSteamID = Server.FindPlayerByFullName(Tokenized.Value.CauserNameUTF8WithPrefix, out CauserPrefix);
+                long CauserSteamID = Server.FindPlayerByFullName(
+                    Tokenized.Value.CauserNameUTF8WithPrefix, 
+                    Squad.Server.PlayersOnServer, 
+                    out CauserPrefix
+                );
+                if (CauserSteamID == -1)
+                {
+                    CauserSteamID = Server.FindPlayerByFullName(
+                        Tokenized.Value.CauserNameUTF8WithPrefix,
+                        Squad.Server.PlayersLeavingServer,
+                        out CauserPrefix
+                    );
+                    #if DEBUG
+                    if (CauserSteamID == -1)
+                    {
+                        Console.WriteLine("Player missing from server or unparsable name: " + Tokenized.Value.CauserNameUTF8WithPrefix);
+                        Console.WriteLine(Line);
+                    }
+                    #endif
+                    return;
+                }
                 Squad.Players[CauserSteamID].Prefix = CauserPrefix;
-                Debug.Assert(CauserSteamID != -1);
 
                 string WeaponName = Squad.TrimIDFromName(Tokenized.Value.Weapon);
                 long WeaponID = Squad.GetItemOrDefault(WeaponName, Squad.Weapons);
@@ -720,8 +786,25 @@ namespace SquadStatSourceWorker
                     // In rare cases, VictimNameUTF8NotNull is still null. There's no way to properly assign the event to players so we drop them.
                     if (Downed && Tokenized.Value.VictimNameUTF8NotNull != null)
                     {
-                        VictimSteamID = Server.FindPlayerByName(Tokenized.Value.VictimNameUTF8NotNull);
-                        Debug.Assert(VictimSteamID != -1);
+                        VictimSteamID = Server.FindPlayerByName(
+                            Tokenized.Value.VictimNameUTF8NotNull, 
+                            Squad.Server.PlayersOnServer
+                        );
+                        if (VictimSteamID == -1)
+                        {
+                            VictimSteamID = Server.FindPlayerByName(
+                                Tokenized.Value.VictimNameUTF8NotNull,
+                                Squad.Server.PlayersLeavingServer
+                            );
+                            #if DEBUG
+                            if (VictimSteamID == -1)
+                            {
+                                Console.WriteLine("Player missing from server or unparsable name: " + Tokenized.Value.VictimNameUTF8NotNull);
+                                Console.WriteLine(Line);
+                            }
+                            #endif
+                            return;
+                        }
                         if (Player.PlayersAreSameTeam(VictimSteamID, CauserSteamID))
                         {
                             PlayerTeamDamageGroup.AddRow(new object[] {
@@ -750,9 +833,27 @@ namespace SquadStatSourceWorker
                 else
                 {
                     string VictimPrefix = null;
-                    VictimSteamID = Server.FindPlayerByFullName(Tokenized.Value.VictimNameUTF8WithPrefix, out VictimPrefix);
-                    // If victim is not found, they disconnected while in combat
-                    if (VictimSteamID == -1) { return; }
+                    VictimSteamID = Server.FindPlayerByFullName(
+                        Tokenized.Value.VictimNameUTF8WithPrefix, 
+                        Squad.Server.PlayersOnServer,
+                        out VictimPrefix
+                    );
+                    if (VictimSteamID == -1)
+                    {
+                        VictimSteamID = Server.FindPlayerByFullName(
+                            Tokenized.Value.VictimNameUTF8WithPrefix,
+                            Squad.Server.PlayersLeavingServer,
+                            out VictimPrefix
+                        );
+                        #if DEBUG
+                        if (VictimSteamID == -1)
+                        {
+                            Console.WriteLine("Player missing from server or unparsable name: " + Tokenized.Value.VictimNameUTF8WithPrefix);
+                            Console.WriteLine(Line);
+                        }
+                        #endif
+                        return;
+                    }
                     Squad.Players[VictimSteamID].Prefix = VictimPrefix;
 
                     // Damage event
@@ -854,7 +955,7 @@ namespace SquadStatSourceWorker
     public class PlayerBledOut : Event
     {
         public override string[] Category { get; } = new string[] { "LogSquadTrace: [DedicatedServer]ASQSoldier::Wound():" };
-        public override string Pattern { get; } = @"[{Timestamp:ToDateTime('yyyy.MM.dd-HH.mm.ss:fff')}][{}]LogSquadTrace: [DedicatedServer]ASQSoldier::Wound(): Player:{VictimNameUTF8WithPrefix!} KillingDamage={} from {CauserController!:NotEqual('nullptr'),SubstringAfter('_C_')} caused by {$}";
+        public override string Pattern { get; } = @"[{Timestamp:ToDateTime('yyyy.MM.dd-HH.mm.ss:fff')}][{}]LogSquadTrace: [DedicatedServer]ASQSoldier::Wound(): Player:{VictimNameUTF8WithPrefix!:NotEqual('nullptr')} KillingDamage={} from {CauserController!:NotEqual('nullptr'),SubstringAfter('_C_')} caused by {$}";
         
         public string VictimNameUTF8WithPrefix { get; set; }
         public string CauserController { get; set; }
@@ -865,11 +966,48 @@ namespace SquadStatSourceWorker
             if (Tokenized.Success)
             {
                 string Prefix = null;
-                long VictimSteamID = Server.FindPlayerByFullName(Tokenized.Value.VictimNameUTF8WithPrefix, out Prefix);
-                if (VictimSteamID == -1) { return; }
+                long VictimSteamID = Server.FindPlayerByFullName(
+                    Tokenized.Value.VictimNameUTF8WithPrefix,
+                    Squad.Server.PlayersOnServer,
+                    out Prefix
+                );
+                if (VictimSteamID == -1)
+                {
+                    VictimSteamID = Server.FindPlayerByFullName(
+                        Tokenized.Value.VictimNameUTF8WithPrefix,
+                        Squad.Server.PlayersLeavingServer,
+                        out Prefix
+                    );
+                    #if DEBUG
+                    if (VictimSteamID == -1)
+                    {
+                        Console.WriteLine("Player missing from server or unparsable name: " + Tokenized.Value.VictimNameUTF8WithPrefix);
+                        Console.WriteLine(Line);
+                    }
+                    #endif
+                    return;
+                }
                 Squad.Players[VictimSteamID].Prefix = Prefix;
 
-                long CauserSteamID = Server.FindPlayerByControllerID(Convert.ToInt32(Tokenized.Value.CauserController));
+                long CauserSteamID = Server.FindPlayerByControllerID(
+                    Convert.ToInt32(Tokenized.Value.CauserController),
+                    Squad.Server.PlayersOnServer
+                );
+                if (CauserSteamID == -1)
+                {
+                    CauserSteamID = Server.FindPlayerByControllerID(
+                        Convert.ToInt32(Tokenized.Value.CauserController),
+                        Squad.Server.PlayersLeavingServer
+                    );
+                    #if DEBUG
+                    if (CauserSteamID == -1)
+                    {
+                        Console.WriteLine("Player missing from server or unparsable name: " + Tokenized.Value.CauserController);
+                        Console.WriteLine(Line);
+                    }
+                    #endif
+                    return;
+                }
 
                 // Bled out from self damage
                 if (VictimSteamID == CauserSteamID)
@@ -964,9 +1102,28 @@ namespace SquadStatSourceWorker
             if (Tokenized.Success)
             {
                 string VictimPrefix = null;
-                long VictimSteamID = Server.FindPlayerByFullName(Tokenized.Value.VictimNameUTF8WithPrefix, out VictimPrefix);
+                long VictimSteamID = Server.FindPlayerByFullName(
+                    Tokenized.Value.VictimNameUTF8WithPrefix, 
+                    Squad.Server.PlayersOnServer,
+                    out VictimPrefix
+                );
+                if (VictimSteamID == -1)
+                {
+                    VictimSteamID = Server.FindPlayerByFullName(
+                        Tokenized.Value.VictimNameUTF8WithPrefix,
+                        Squad.Server.PlayersLeavingServer,
+                        out VictimPrefix
+                    );
+                    #if DEBUG
+                    if (VictimSteamID == -1)
+                    {
+                        Console.WriteLine("Player missing from server or unparsable name: " + Tokenized.Value.VictimNameUTF8WithPrefix);
+                        Console.WriteLine(Line);
+                    }
+                    #endif
+                    return;
+                }
                 Squad.Players[VictimSteamID].Prefix = VictimPrefix;
-                Debug.Assert(VictimSteamID != -1);
 
                 // Toaster bath
                 if (Tokenized.Value.CauserPawn.Equals("nullptr", StringComparison.Ordinal))
@@ -986,8 +1143,25 @@ namespace SquadStatSourceWorker
                     // Player left the server and cannot be credited with the kill
                     if (Tokenized.Value.CauserController.Equals("nullptr", StringComparison.Ordinal)) { return; }
 
-                    long CauserSteamID = Server.FindPlayerByControllerID(Convert.ToInt32(Tokenized.Value.CauserController));
-                    Debug.Assert(CauserSteamID != -1);
+                    long CauserSteamID = Server.FindPlayerByControllerID(
+                        Convert.ToInt32(Tokenized.Value.CauserController),
+                        Squad.Server.PlayersOnServer
+                    );
+                    if (CauserSteamID == -1)
+                    {
+                        CauserSteamID = Server.FindPlayerByControllerID(
+                            Convert.ToInt32(Tokenized.Value.CauserController),
+                            Squad.Server.PlayersLeavingServer
+                        );
+                        #if DEBUG
+                        if (CauserSteamID == -1)
+                        {
+                            Console.WriteLine("Player missing from server or unparsable name: " + Tokenized.Value.CauserController);
+                            Console.WriteLine(Line);
+                        }
+                        #endif
+                        return;
+                    }
 
                     if (Player.PlayersAreSameTeam(VictimSteamID, CauserSteamID))
                     {
@@ -1046,14 +1220,52 @@ namespace SquadStatSourceWorker
             if (Tokenized.Success)
             {
                 string ReviverPrefix = null;
-                long ReviverSteamID = Server.FindPlayerByFullName(Tokenized.Value.ReviverNameUTF8WithPrefix, out ReviverPrefix);
+                long ReviverSteamID = Server.FindPlayerByFullName(
+                    Tokenized.Value.ReviverNameUTF8WithPrefix,
+                    Squad.Server.PlayersOnServer,
+                    out ReviverPrefix
+                );
+                if (ReviverSteamID == -1)
+                {
+                    ReviverSteamID = Server.FindPlayerByFullName(
+                        Tokenized.Value.ReviverNameUTF8WithPrefix,
+                        Squad.Server.PlayersLeavingServer,
+                        out ReviverPrefix
+                    );
+                    #if DEBUG
+                    if (ReviverSteamID == -1)
+                    {
+                        Console.WriteLine("Player missing from server or unparsable name: " + Tokenized.Value.ReviverNameUTF8WithPrefix);
+                        Console.WriteLine(Line);
+                    }
+                    #endif
+                    return;
+                }
                 Squad.Players[ReviverSteamID].Prefix = ReviverPrefix;
-                Debug.Assert(ReviverSteamID != -1);
 
                 string RevivedPrefix = null;
-                long RevivedSteamID = Server.FindPlayerByFullName(Tokenized.Value.RevivedNameUTF8WithPrefix, out RevivedPrefix);
+                long RevivedSteamID = Server.FindPlayerByFullName(
+                    Tokenized.Value.RevivedNameUTF8WithPrefix,
+                    Squad.Server.PlayersOnServer,
+                    out RevivedPrefix
+                );
+                if (RevivedSteamID == -1)
+                {
+                    RevivedSteamID = Server.FindPlayerByFullName(
+                        Tokenized.Value.RevivedNameUTF8WithPrefix,
+                        Squad.Server.PlayersLeavingServer,
+                        out RevivedPrefix
+                    );
+                    #if DEBUG
+                    if (RevivedSteamID == -1)
+                    {
+                        Console.WriteLine("Player missing from server or unparsable name: " + Tokenized.Value.RevivedNameUTF8WithPrefix);
+                        Console.WriteLine(Line);
+                    }
+                    #endif
+                    return;
+                }
                 Squad.Players[RevivedSteamID].Prefix = RevivedPrefix;
-                Debug.Assert(RevivedSteamID != -1);
 
                 PlayerReviveGroup.AddRow(new object[] {
                     (DateTimeOffset)Tokenized.Value.Timestamp,
@@ -1195,7 +1407,7 @@ namespace SquadStatSourceWorker
                     new Contract(Squad.Server.CurrentMatch.TeamTwoID),
                     Map.ID
                 });
-
+                Squad.Server.PlayersLeavingServer.Clear();
                 Worker.WriteDedicatedServerConfig("lasttimestamp", Line.Substring(1, 23));
             }
         }
