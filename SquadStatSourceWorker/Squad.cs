@@ -182,6 +182,7 @@ namespace SquadStatSourceWorker
         public bool Valid { get; set; }
         public long TeamOneID { get; set; }
         public long TeamTwoID { get; set; }
+        public long WinnerTeamID { get; set; }
     }
 
     public class SquadType

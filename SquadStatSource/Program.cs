@@ -1,6 +1,8 @@
 ﻿using System;
 using System.IO;
+using System.IO.Pipes;
 using System.Net.Http;
+using System.Threading;
 using System.Diagnostics;
 using System.Threading.Tasks;
 using System.Collections.Generic;
@@ -13,6 +15,11 @@ namespace SquadStatSource
         public string ID { get; set; }
         public string Path { get; set; }
         public string LastTimestamp { get; set; }
+
+        public AnonymousPipeServerStream Sender;
+        public AnonymousPipeServerStream Receiver;
+        public StreamWriter SenderWrite;
+        public bool Running;
     }
 
     class Program
@@ -27,9 +34,13 @@ namespace SquadStatSource
 
         private static List<DedicatedServer> DedicatedServers = new List<DedicatedServer>();
 
+        public static Uploader Uploader;
+
         static void Main(string[] args)
         {
             Config = Newtonsoft.Json.JsonConvert.DeserializeObject(File.ReadAllText(Appsettings)) as JObject;
+
+            Uploader = new Uploader(Config);
 
             HttpClient Client = new HttpClient();
             foreach (var Server in Config["servers"])
@@ -65,13 +76,44 @@ namespace SquadStatSource
             Process Worker = null;
             foreach (var Server in DedicatedServers)
             {
+                Server.Sender = new AnonymousPipeServerStream(PipeDirection.Out, HandleInheritability.Inheritable);
+                Server.Receiver = new AnonymousPipeServerStream(PipeDirection.In, HandleInheritability.Inheritable);
+                Server.Running = true;
+
                 var Info = new ProcessStartInfo
                 {
                     UseShellExecute = false,
                     FileName = "dotnet",
-                    Arguments = WorkerPath + " " + Server.ID + " " + Server.Path
+                    Arguments = WorkerPath 
+                        + " " + Server.Sender.GetClientHandleAsString() 
+                        + " " + Server.Receiver.GetClientHandleAsString()
                 };
                 Worker = Process.Start(Info);
+
+                Server.Sender.DisposeLocalCopyOfClientHandle();
+                Server.Receiver.DisposeLocalCopyOfClientHandle();
+
+                Server.SenderWrite = new StreamWriter(Server.Sender);
+                Server.SenderWrite.AutoFlush = true;
+                Server.SenderWrite.WriteLine("SYNC");
+                Server.Sender.WaitForPipeDrain();
+
+                Server.SenderWrite.WriteLine(Server.ID + " " + Server.Path);
+                Server.Sender.WaitForPipeDrain();
+
+                new Thread(delegate ()
+                {
+                    using (StreamReader Reader = new StreamReader(Server.Receiver))
+                    {
+                        String Received;
+                        while (Server.Running && Server.Receiver.IsConnected)
+                        {
+                            Received = Reader.ReadLine();
+                            if (Received != null) { Uploader.UploadDiff(Received); }
+                        }
+                        Server.Running = false;
+                    }
+                }).Start();
             }
             // Doesn't matter which one we wait for
             Worker.WaitForExit();

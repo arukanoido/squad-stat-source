@@ -5,7 +5,7 @@ using Amazon.S3;
 using Amazon.S3.Transfer;
 using Newtonsoft.Json.Linq;
 
-namespace SquadStatSourceWorker
+namespace SquadStatSource
 {
     public class Uploader
     {
@@ -14,7 +14,11 @@ namespace SquadStatSourceWorker
 
         public IAmazonS3 S3 { get; }
 
-        public List<string> FilesUploading = new List<string>();
+        FileSystemWatcher Watcher = new FileSystemWatcher();
+
+        public List<string> FilesUploading = new List<string>(); 
+        
+        string Base = "matchdata\\";
 
         public Uploader(JObject Config)
         {
@@ -22,21 +26,27 @@ namespace SquadStatSourceWorker
             AWSSecretKey = Config["aws_secret_key"].ToString();
 
             S3 = new AmazonS3Client(AWSAccessKey, AWSSecretKey, Amazon.RegionEndpoint.USWest2);
+
+#if DEBUG
+            Base = "..\\match\\";
+#endif
+#if RELEASE
+            System.IO.Directory.CreateDirectory("matchdata");
+#endif
         }
 
-        public void Upload(string Path, string FileName)
+        public void Upload(string Path, string FileName, string Partition)
         {
             var Utility = new TransferUtility(S3);
             var Request = new TransferUtilityUploadRequest
             {
                 BucketName = "squadstats-raw",
-                Key = "year=" + Squad.Server.CurrentMatch.MatchStart.Year + "/"
-                    + "month=" + Squad.Server.CurrentMatch.MatchStart.Month + "/"
-                    + FileName,
+                Key = Partition + FileName,
                 FilePath = Path + "\\" + FileName,
             };
             var UploadTask = Utility.UploadAsync(Request);
-            UploadTask.ContinueWith(Result => {
+            UploadTask.ContinueWith(Result =>
+            {
                 if (Result.Status == System.Threading.Tasks.TaskStatus.Faulted)
                 {
                     FilesUploading.Remove(System.IO.Path.GetFileNameWithoutExtension(FileName));
@@ -50,15 +60,15 @@ namespace SquadStatSourceWorker
             });
         }
 
-        public void UploadDiff(string Path)
+        public void UploadDiff(string Partition)
         {
-            string[] FilePaths = Directory.GetFiles(Path, "*.parquet", SearchOption.TopDirectoryOnly);
+            string[] FilePaths = Directory.GetFiles(Base, "*.parquet", SearchOption.TopDirectoryOnly);
             foreach (var FilePath in FilePaths)
             {
                 if (!FilesUploading.Contains(System.IO.Path.GetFileNameWithoutExtension(FilePath)))
                 {
                     FilesUploading.Add(System.IO.Path.GetFileNameWithoutExtension(FilePath));
-                    Upload(System.IO.Path.GetDirectoryName(FilePath), System.IO.Path.GetFileName(FilePath));
+                    Upload(System.IO.Path.GetDirectoryName(FilePath), System.IO.Path.GetFileName(FilePath), Partition);
                 }
             }
         }

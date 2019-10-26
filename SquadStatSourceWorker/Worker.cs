@@ -2,6 +2,7 @@
 using System.IO;
 using System.Text;
 using System.Linq;
+using System.IO.Pipes;
 using System.Threading;
 using System.Diagnostics;
 using System.Globalization;
@@ -17,6 +18,11 @@ namespace SquadStatSourceWorker
         public string Index { get; set; }
         public string Path { get; set; }
         public string LastTimestamp { get; set; }
+
+        public AnonymousPipeClientStream Sender;
+        public AnonymousPipeClientStream Receiver;
+        public StreamWriter SenderWrite;
+        public bool Running;
     }
 
     public class Worker
@@ -29,7 +35,6 @@ namespace SquadStatSourceWorker
 #endif
         public static JObject Config;
         public static DedicatedServer DedicatedServer = new DedicatedServer();
-        public static Uploader Uploader;
 
         public static Tokenizer Tokenizer = new Tokenizer()
             .RegisterValidator<Tokens.Validators.NotEqualValidator>()
@@ -42,13 +47,49 @@ namespace SquadStatSourceWorker
             
             Squad.Init();
 
-            string ID = args[0];
+            string InHandle = args[0];
+            string OutHandle = args[1];
+
+            new Thread(delegate ()
+            {
+                DedicatedServer.Receiver = new AnonymousPipeClientStream(PipeDirection.In, InHandle);
+                DedicatedServer.Sender = new AnonymousPipeClientStream(PipeDirection.Out, OutHandle);
+                DedicatedServer.Running = true;
+
+                DedicatedServer.SenderWrite = new StreamWriter(DedicatedServer.Sender);
+                DedicatedServer.SenderWrite.AutoFlush = true;
+
+                using (StreamReader Reader = new StreamReader(DedicatedServer.Receiver))
+                {
+                    string Received;
+                    do
+                    {
+                        Received = Reader.ReadLine();
+                    }
+                    while (!Received.StartsWith("SYNC") && DedicatedServer.Running);
+
+                    while (DedicatedServer.Running && DedicatedServer.Receiver.IsConnected)
+                    {
+                        Received = Reader.ReadLine();
+                        if (Received != null) 
+                        {
+                            Start(Received); 
+                        }
+                    }
+                    DedicatedServer.Running = false;
+                }
+            }).Start();
+
+        }
+
+        static void Start(string Received)
+        {
+            string[] Parts = Received.Split(' ', 2);
+            string ID = Parts[0];
+            string Path = Parts[1] + @"\SquadGame\Saved\Logs\";
             Squad.Server.ServerID = Convert.ToInt64(ID);
-            string Path = args[1] + @"\SquadGame\Saved\Logs\";
 
             Config = Newtonsoft.Json.JsonConvert.DeserializeObject(File.ReadAllText(Appsettings)) as JObject;
-
-            Uploader = new Uploader(Config);
 
             int ServerIndex = 0;
             foreach (var Server in Config["servers"])
@@ -176,13 +217,19 @@ namespace SquadStatSourceWorker
 
         public static void WriteDedicatedServerConfig(string Key, string Value)
         {
-            var FilePath = Appsettings;
-            var Json = File.ReadAllText(FilePath);
+            string Json = null;
+            using (FileStream Stream = new FileStream(Appsettings, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            {
+                using (StreamReader Reader = new StreamReader(Stream))
+                {
+                    Json = Reader.ReadToEnd();
+                }
+            }
             var Jobject = Newtonsoft.Json.JsonConvert.DeserializeObject(Json) as JObject;
             var Jtoken = Jobject.SelectToken("servers[" + DedicatedServer.Index + "]." + Key);
             Jtoken.Replace(Value);
             var OutJson = Jobject.ToString();
-            File.WriteAllText(FilePath, OutJson);
+            File.WriteAllText(Appsettings, OutJson);
         }
     }
 }

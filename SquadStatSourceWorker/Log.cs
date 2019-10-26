@@ -27,9 +27,6 @@ namespace SquadStatSourceWorker
 #if DEBUG
                 Base = "..\\match\\";
 #endif
-#if RELEASE
-                System.IO.Directory.CreateDirectory("matchdata");
-#endif
                 var Filename = Squad.Server.CurrentMatch.MatchID.ToString() + ".parquet";
                 using (Stream FileStream = System.IO.File.Create(Base + Filename))
                 {
@@ -51,7 +48,10 @@ namespace SquadStatSourceWorker
                         Writer.Write(Table);
                     }
                 }
-                Worker.Uploader.UploadDiff(Base);
+                string Partition = "year=" + Squad.Server.CurrentMatch.MatchStart.Year + "/"
+                    + "month=" + Squad.Server.CurrentMatch.MatchStart.Month + "/";
+                Worker.DedicatedServer.SenderWrite.WriteLine(Partition);
+                Worker.DedicatedServer.Sender.WaitForPipeDrain();
             }
             Table.Clear();
             Clear();
@@ -1346,6 +1346,18 @@ namespace SquadStatSourceWorker
             {
                 if (Squad.Server.CurrentMatch != null)
                 {
+                    if (Squad.Server.CurrentMatch.MatchEnd == DateTime.MinValue)
+                    {
+                        Squad.Server.CurrentMatch.MatchEnd = Tokenized.Value.Timestamp;
+                        MatchEnd.MatchEndGroup.AddRow(new object[] {
+                            (DateTimeOffset)Tokenized.Value.Timestamp,
+                            true,
+                            new Contract(Squad.Server.CurrentMatch.WinnerTeamID),
+                            new Contract(Squad.Server.CurrentMatch.TeamOneID),
+                            new Contract(Squad.Server.CurrentMatch.TeamTwoID),
+                            0L
+                        });
+                    }
                     // Write a completed match to file
                     Events.Serializer.Serialize();
                 }
@@ -1390,23 +1402,27 @@ namespace SquadStatSourceWorker
             var Tokenized = Worker.Tokenizer.Tokenize<MatchEnd>(Pattern, Line);
             if (Tokenized.Success)
             {
-                var CurrentMatch = Squad.Server.CurrentMatch;
-                CurrentMatch.MatchEnd = Tokenized.Value.Timestamp;
-                CurrentMatch.MatchDuration = (CurrentMatch.MatchEnd - CurrentMatch.MatchStart).Ticks;
-
-                var Map = new SquadType(Tokenized.Value.Map);
-                Squad.Maps.TryAdd(Map.ID, Map);
-
                 var FactionID = Squad.GetItemOrDefault(Tokenized.Value.Faction, Squad.Factions);
+                Squad.Server.CurrentMatch.WinnerTeamID = FactionID;
+                
+                if (Squad.Server.CurrentMatch.MatchEnd == DateTime.MinValue)
+                {
+                    var CurrentMatch = Squad.Server.CurrentMatch;
+                    CurrentMatch.MatchEnd = Tokenized.Value.Timestamp;
+                    CurrentMatch.MatchDuration = (CurrentMatch.MatchEnd - CurrentMatch.MatchStart).Ticks;
 
-                MatchEndGroup.AddRow(new object[] { 
-                    (DateTimeOffset)Tokenized.Value.Timestamp, 
-                    true, 
-                    FactionID,
-                    new Contract(Squad.Server.CurrentMatch.TeamOneID),
-                    new Contract(Squad.Server.CurrentMatch.TeamTwoID),
-                    Map.ID
-                });
+                    var Map = new SquadType(Tokenized.Value.Map);
+                    Squad.Maps.TryAdd(Map.ID, Map);
+
+                    MatchEndGroup.AddRow(new object[] { 
+                        (DateTimeOffset)Tokenized.Value.Timestamp, 
+                        true,
+                        new Contract(Squad.Server.CurrentMatch.WinnerTeamID),
+                        new Contract(Squad.Server.CurrentMatch.TeamOneID),
+                        new Contract(Squad.Server.CurrentMatch.TeamTwoID),
+                        Map.ID
+                    });
+                }
                 Squad.Server.PlayersLeavingServer.Clear();
                 Worker.WriteDedicatedServerConfig("lasttimestamp", Line.Substring(1, 23));
             }
@@ -1423,13 +1439,6 @@ namespace SquadStatSourceWorker
         public override string[] Category { get; } = new string[] { "" };
         public override string Pattern { get; } = @"[{Timestamp:ToDateTime('yyyy.MM.dd-HH.mm.ss:fff')}][{}]{$}";
 
-        public static FieldGroup ServerClosedGroup { get; } = new FieldGroup(new DataField[] {
-            new DateTimeDataField("timestamp", DateTimeFormat.DateAndTime, false),
-            new DataField("faction_one_id", DataType.Int64),
-            new DataField("faction_two_id", DataType.Int64),
-            new DataField("server_shutdown", DataType.Boolean)
-        });
-
         static ServerClosed() { }
 
         public override void Parse(string Line)
@@ -1437,15 +1446,18 @@ namespace SquadStatSourceWorker
             var Tokenized = Worker.Tokenizer.Tokenize<ServerClosed>(Pattern, Line);
             if (Tokenized.Success)
             {
-                ServerClosedGroup.AddRow(new object[] {
-                    (DateTimeOffset)Tokenized.Value.Timestamp,
+                MatchEnd.MatchEndGroup.AddRow(new object[] { 
+                    (DateTimeOffset)Tokenized.Value.Timestamp, 
+                    true, 
+                    0,
                     new Contract(Squad.Server.CurrentMatch.TeamOneID),
                     new Contract(Squad.Server.CurrentMatch.TeamTwoID),
-                    true
+                    0
                 });
 
                 Events.Serializer.Serialize();
                 Worker.WriteDedicatedServerConfig("lasttimestamp", Line.Substring(1, 23));
+                Squad.Server.PlayersLeavingServer.Clear();
                 Squad.Server.PlayersOnServer.Clear();
             }
         }
