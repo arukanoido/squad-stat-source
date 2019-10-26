@@ -274,7 +274,10 @@ namespace SquadStatSourceWorker
                     ControllerID = Convert.ToInt32(Tokenized.Value.Controller)
                 };
                 Squad.Players[ID] = Player;
-                PlayerJoinGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
+                if (Squad.Server.CurrentMatch != null)
+                {
+                    PlayerJoinGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
+                }
             }
         }
     }
@@ -346,7 +349,10 @@ namespace SquadStatSourceWorker
                 {
                     Squad.Server.PlayersLeavingServer.Add(ID);
                     Squad.Server.PlayersOnServer.Remove(ID);
-                    PlayerDisconnectGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
+                    if (Squad.Server.CurrentMatch != null)
+                    {
+                        PlayerDisconnectGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
+                    }
                 }
             }
         }
@@ -404,7 +410,10 @@ namespace SquadStatSourceWorker
                 {
                     Squad.Server.PlayersLeavingServer.Add(ID);
                     Squad.Server.PlayersOnServer.Remove(ID);
-                    PlayerKickedGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
+                    if (Squad.Server.CurrentMatch != null)
+                    {
+                        PlayerKickedGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
+                    }
                 }
             }
         }
@@ -439,7 +448,10 @@ namespace SquadStatSourceWorker
                         Squad.Players[ID] = Player;
                         PlayerJoinedDuringMapChange.List.RemoveAt(0);
 
-                        PlayerJoined.PlayerJoinGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
+                        if (Squad.Server.CurrentMatch != null)
+                        {
+                            PlayerJoined.PlayerJoinGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
+                        }
                     }
                 }
             }
