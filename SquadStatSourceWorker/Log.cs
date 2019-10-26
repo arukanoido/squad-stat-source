@@ -1449,10 +1449,10 @@ namespace SquadStatSourceWorker
                 MatchEnd.MatchEndGroup.AddRow(new object[] { 
                     (DateTimeOffset)Tokenized.Value.Timestamp, 
                     true, 
-                    0,
+                    0L,
                     new Contract(Squad.Server.CurrentMatch.TeamOneID),
                     new Contract(Squad.Server.CurrentMatch.TeamTwoID),
-                    0
+                    0L
                 });
 
                 Events.Serializer.Serialize();
