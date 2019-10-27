@@ -94,6 +94,7 @@ namespace SquadStatSourceWorker
 
         public void AddRow(object[] Data, bool Optional = true)
         {
+            if (Squad.Server.CurrentMatch == null) { return; }
             Debug.Assert(Data.Length == Indices.Count); // Ensure you have 1 Data item per field
             List<Contract> Contracts = new List<Contract>();
             if (!Optional) { Squad.Server.CurrentMatch.Valid = true; }
@@ -239,14 +240,14 @@ namespace SquadStatSourceWorker
     public class PlayerJoined : Event
     {
         public override string[] Category { get; } = new string[] {
+            "LogNet: Join request:",
             "LogSquad: PostLogin: NewPlayer:",
-            "LogEasyAntiCheatServer: [RegisterClient] Client:",
-            "LogNet: Join succeeded:"
+            "LogEasyAntiCheatServer: [RegisterClient] Client:"
         };
         public override string Pattern { get; } =
-@"[{Timestamp:ToDateTime('yyyy.MM.dd-HH.mm.ss:fff')}][{}]LogSquad: PostLogin: NewPlayer: BP_PlayerController_C {Controller$!:SubstringAfter('_C_')}
-[{}][{}]LogEasyAntiCheatServer: [RegisterClient] Client: {} PlayerGUID: {SteamID!} PlayerIP: {} OwnerGUID: {} PlayerName: {$}
-[{}][{}]LogNet: Join succeeded: {NameUTF8$!}";
+@"[{Timestamp:ToDateTime('yyyy.MM.dd-HH.mm.ss:fff')}][{}]LogNet: Join request: /Game/Maps/EntryMap?Name={NameUTF8!}?Token{$}
+[{}][{}]LogSquad: PostLogin: NewPlayer: BP_PlayerController_C {Controller$!:SubstringAfter('_C_')}
+[{}][{}]LogEasyAntiCheatServer: [RegisterClient] Client: {} PlayerGUID: {SteamID!} PlayerIP: {} OwnerGUID: {} PlayerName: {$}";
 
         public string Controller { get; set; }
         public string SteamID { get; set; }
@@ -274,10 +275,7 @@ namespace SquadStatSourceWorker
                     ControllerID = Convert.ToInt32(Tokenized.Value.Controller)
                 };
                 Squad.Players[ID] = Player;
-                if (Squad.Server.CurrentMatch != null)
-                {
-                    PlayerJoinGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
-                }
+                PlayerJoinGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
             }
         }
     }
@@ -344,15 +342,11 @@ namespace SquadStatSourceWorker
             if (Tokenized.Success)
             {
                 var ID = Convert.ToInt64(Tokenized.Value.SteamID);
-
                 if (Squad.Server.PlayersOnServer.Contains(ID))
                 {
                     Squad.Server.PlayersLeavingServer.Add(ID);
                     Squad.Server.PlayersOnServer.Remove(ID);
-                    if (Squad.Server.CurrentMatch != null)
-                    {
-                        PlayerDisconnectGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
-                    }
+                    PlayerDisconnectGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
                 }
             }
         }
@@ -387,7 +381,7 @@ namespace SquadStatSourceWorker
                     Tokenized.Value.PlayerNameWithPrefixUTF8, 
                     Squad.Server.PlayersOnServer, 
                     out PlayerPrefix
-                );
+                ); 
                 if (ID == -1) { 
                     ID = Server.FindPlayerByFullName(
                         Tokenized.Value.PlayerNameWithPrefixUTF8,
@@ -410,10 +404,7 @@ namespace SquadStatSourceWorker
                 {
                     Squad.Server.PlayersLeavingServer.Add(ID);
                     Squad.Server.PlayersOnServer.Remove(ID);
-                    if (Squad.Server.CurrentMatch != null)
-                    {
-                        PlayerKickedGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
-                    }
+                    PlayerKickedGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
                 }
             }
         }
@@ -447,11 +438,7 @@ namespace SquadStatSourceWorker
                         Player.SteamID = ID;
                         Squad.Players[ID] = Player;
                         PlayerJoinedDuringMapChange.List.RemoveAt(0);
-
-                        if (Squad.Server.CurrentMatch != null)
-                        {
-                            PlayerJoined.PlayerJoinGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
-                        }
+                        PlayerJoined.PlayerJoinGroup.AddRow(new object[] { (DateTimeOffset)Tokenized.Value.Timestamp, ID, true });
                     }
                 }
             }
@@ -1458,19 +1445,22 @@ namespace SquadStatSourceWorker
             var Tokenized = Worker.Tokenizer.Tokenize<ServerClosed>(Pattern, Line);
             if (Tokenized.Success)
             {
-                MatchEnd.MatchEndGroup.AddRow(new object[] { 
-                    (DateTimeOffset)Tokenized.Value.Timestamp, 
-                    true, 
-                    0L,
-                    new Contract(Squad.Server.CurrentMatch.TeamOneID),
-                    new Contract(Squad.Server.CurrentMatch.TeamTwoID),
-                    0L
-                });
+                if (Squad.Server.CurrentMatch != null)
+                {
+                    MatchEnd.MatchEndGroup.AddRow(new object[] { 
+                        (DateTimeOffset)Tokenized.Value.Timestamp, 
+                        true, 
+                        0L,
+                        new Contract(Squad.Server.CurrentMatch.TeamOneID),
+                        new Contract(Squad.Server.CurrentMatch.TeamTwoID),
+                        0L
+                    });
 
-                Events.Serializer.Serialize();
-                Worker.WriteDedicatedServerConfig("lasttimestamp", Line.Substring(1, 23));
-                Squad.Server.PlayersLeavingServer.Clear();
-                Squad.Server.PlayersOnServer.Clear();
+                    Events.Serializer.Serialize();
+                    Worker.WriteDedicatedServerConfig("lasttimestamp", Line.Substring(1, 23));
+                    Squad.Server.PlayersLeavingServer.Clear();
+                    Squad.Server.PlayersOnServer.Clear();
+                }
             }
         }
     }
