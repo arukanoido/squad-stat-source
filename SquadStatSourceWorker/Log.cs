@@ -245,7 +245,7 @@ namespace SquadStatSourceWorker
             "LogEasyAntiCheatServer: [RegisterClient] Client:"
         };
         public override string Pattern { get; } =
-@"[{Timestamp:ToDateTime('yyyy.MM.dd-HH.mm.ss:fff')}][{}]LogNet: Join request: /Game/Maps/EntryMap?Name={NameUTF8!}?Token{$}
+@"[{Timestamp:ToDateTime('yyyy.MM.dd-HH.mm.ss:fff')}][{}]LogNet: Join request: /Game/Maps/EntryMap?Name={NameUTF8!}?{$}
 [{}][{}]LogSquad: PostLogin: NewPlayer: BP_PlayerController_C {Controller$!:SubstringAfter('_C_')}
 [{}][{}]LogEasyAntiCheatServer: [RegisterClient] Client: {} PlayerGUID: {SteamID!} PlayerIP: {} OwnerGUID: {} PlayerName: {$}";
 
@@ -418,8 +418,9 @@ namespace SquadStatSourceWorker
     public class PlayerRegisterClientAfterMapChange : Event
     {
         public override string[] Category { get; } = new string[] { "LogEasyAntiCheatServer: [RegisterClient] Client:" };
-        public override string Pattern { get; } = @"[{Timestamp:ToDateTime('yyyy.MM.dd-HH.mm.ss:fff')}][{}]LogEasyAntiCheatServer: [RegisterClient] Client: {EngineID} PlayerGUID: {SteamID} PlayerIP: {} OwnerGUID: {} PlayerName: {$}";
+        public override string Pattern { get; } = @"[{Timestamp:ToDateTime('yyyy.MM.dd-HH.mm.ss:fff')}][{}]LogEasyAntiCheatServer: [RegisterClient] Client: {EngineID} PlayerGUID: {SteamID} PlayerIP: {} OwnerGUID: {} PlayerName: {NameASCII$}";
         public string SteamID { get; set; }
+        public string NameASCII { get; set; }
 
         static PlayerRegisterClientAfterMapChange() {}
 
@@ -434,7 +435,21 @@ namespace SquadStatSourceWorker
                     if (!Squad.Server.PlayersOnServer.Contains(ID))
                     {
                         Squad.Server.PlayersOnServer.Add(ID);
-                        var Player = PlayerJoinedDuringMapChange.List[0];
+
+                        Player Player = null;
+                        foreach (var IncomingPlayer in PlayerJoinedDuringMapChange.List)
+                        {
+                            // First we try to compare a UTF8 supported name with an ASCII name
+                            if (IncomingPlayer.Name.Equals(Tokenized.Value.NameASCII))
+                            {
+                                Player = IncomingPlayer;
+                            }
+                        }
+                        if (Player == null)
+                        {
+                            // If that didn't work, just grab the first instance available
+                            Player = PlayerJoinedDuringMapChange.List[0];
+                        }
                         Player.SteamID = ID;
                         Squad.Players[ID] = Player;
                         PlayerJoinedDuringMapChange.List.RemoveAt(0);
