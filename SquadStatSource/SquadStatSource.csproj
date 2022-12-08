@@ -18,7 +18,7 @@
     <ContentWithTargetPath Include="..\SquadStatSourceWorker\bin\$(Configuration)\$(TargetFramework)\*.json" TargetPath="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest"/>
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Newtonsoft.Json" Version="12.0.2"/>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.2"/>
     <PackageReference Include="AWSSDK.S3" Version="3.3.104.31"/>
   </ItemGroup>
   <ItemGroup>
